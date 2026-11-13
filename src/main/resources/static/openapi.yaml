@@ -1,0 +1,376 @@
+openapi: 3.0.3
+info:
+  title: E-Library API
+  version: 0.0.1
+  description: |
+    Book 仅保存书目，BookCopy 是借阅单位，Loan 保留借还历史。
+    OVERDUE 在查询时派生，数据库只保存 ACTIVE/RETURNED。
+    X-Reader-Id 是开发阶段当前读者标识，不是登录认证机制。
+servers:
+  - url: http://localhost:8080
+tags:
+  - name: Catalog
+  - name: Readers
+  - name: Loans
+paths:
+  /books:
+    get:
+      tags: [Catalog]
+      operationId: browseBooks
+      summary: 浏览和搜索书目及库存
+      parameters:
+        - name: q
+          in: query
+          description: 标题或作者模糊搜索，忽略大小写，通配符按普通字符处理
+          schema: {type: string, maxLength: 200, default: ''}
+        - name: category
+          in: query
+          description: 分类精确匹配，忽略大小写
+          schema: {type: string, maxLength: 100, default: ''}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+      responses:
+        '200':
+          description: 分页书目
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/PageMetadata'}
+                  - type: object
+                    required: [content]
+                    properties:
+                      content:
+                        type: array
+                        items: {$ref: '#/components/schemas/Book'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+    post:
+      tags: [Catalog]
+      operationId: registerBook
+      summary: 书目及首批副本入库
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title, author, category, barcodes]
+              properties:
+                title: {type: string, minLength: 1, maxLength: 200}
+                author: {type: string, minLength: 1, maxLength: 100}
+                category: {type: string, minLength: 1, maxLength: 100}
+                barcodes:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  uniqueItems: true
+                  items: {type: string, minLength: 1, maxLength: 100}
+      responses:
+        '201':
+          description: 入库成功
+          headers:
+            Location:
+              description: 书目详情路径
+              schema: {type: string}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BookDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /books/{bookId}:
+    parameters:
+      - {$ref: '#/components/parameters/BookId'}
+    get:
+      tags: [Catalog]
+      operationId: getBook
+      summary: 书目详情，包含在馆副本和可借数量
+      responses:
+        '200':
+          description: 书目详情
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BookDetail'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /books/{bookId}/copies:
+    parameters:
+      - {$ref: '#/components/parameters/BookId'}
+    post:
+      tags: [Catalog]
+      operationId: registerCopy
+      summary: 增加一个副本
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [barcode]
+              properties:
+                barcode: {type: string, minLength: 1, maxLength: 100}
+      responses:
+        '201':
+          description: 副本登记成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Copy'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /books/{bookId}/copies/{copyId}:
+    parameters:
+      - {$ref: '#/components/parameters/BookId'}
+      - name: copyId
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+    delete:
+      tags: [Catalog]
+      operationId: withdrawCopy
+      summary: 下架未借出副本，至少保留一个在馆副本
+      responses:
+        '204': {description: 已下架，副本与借阅历史保留}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /readers:
+    post:
+      tags: [Readers]
+      operationId: registerReader
+      summary: 登记读者，默认借阅上限 5
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+      responses:
+        '201':
+          description: 读者登记成功
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Reader'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+  /readers/me/loans:
+    get:
+      tags: [Readers, Loans]
+      operationId: currentLoans
+      summary: 当前读者借阅记录
+      parameters:
+        - {$ref: '#/components/parameters/CurrentReader'}
+        - name: status
+          in: query
+          description: active 包含逾期未归还；all 返回全部历史
+          schema: {type: string, enum: [active, overdue, returned, all], default: active}
+        - {$ref: '#/components/parameters/Page'}
+        - {$ref: '#/components/parameters/Size'}
+      responses:
+        '200':
+          description: 按借出时间倒序分页
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/PageMetadata'}
+                  - type: object
+                    required: [content]
+                    properties:
+                      content:
+                        type: array
+                        items: {$ref: '#/components/schemas/Loan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /loans:
+    post:
+      tags: [Loans]
+      operationId: borrowBook
+      summary: 借阅一本书，可自动分配副本
+      parameters:
+        - {$ref: '#/components/parameters/CurrentReader'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [bookId]
+              properties:
+                bookId: {type: string, format: uuid}
+                copyId:
+                  type: string
+                  format: uuid
+                  nullable: true
+                  description: 可省略或传 null，系统自动分配可借副本
+      responses:
+        '201':
+          description: 借阅成功，副本和借阅事实原子提交
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Loan'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /loans/{loanId}/return:
+    parameters:
+      - {$ref: '#/components/parameters/LoanId'}
+      - {$ref: '#/components/parameters/CurrentReader'}
+    post:
+      tags: [Loans]
+      operationId: returnLoan
+      summary: 归还，保留历史；重复归还返回 LOAN_NOT_ACTIVE
+      responses:
+        '200': {$ref: '#/components/responses/LoanUpdated'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /loans/{loanId}/renewal:
+    parameters:
+      - {$ref: '#/components/parameters/LoanId'}
+      - {$ref: '#/components/parameters/CurrentReader'}
+    post:
+      tags: [Loans]
+      operationId: renewLoan
+      summary: 最多续借一次且未逾期，新到期日从原到期日延长
+      responses:
+        '200': {$ref: '#/components/responses/LoanUpdated'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+components:
+  parameters:
+    BookId:
+      name: bookId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    LoanId:
+      name: loanId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    CurrentReader:
+      name: X-Reader-Id
+      in: header
+      required: true
+      description: 开发阶段的当前读者 ID；生产接入认证主体
+      schema: {type: string, format: uuid}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 0, default: 0}
+    Size:
+      name: size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+  responses:
+    BadRequest:
+      description: INVALID_REQUEST，含校验、UUID、请求头或 JSON 错误
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Forbidden:
+      description: FORBIDDEN，借阅记录不属于当前读者
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: BOOK_NOT_FOUND / COPY_NOT_FOUND / READER_NOT_FOUND / LOAN_NOT_FOUND
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Conflict:
+      description: |
+        COPY_NOT_AVAILABLE / COPY_BOOK_MISMATCH / LOAN_LIMIT_EXCEEDED /
+        LOAN_NOT_ACTIVE / RENEWAL_NOT_ALLOWED / BARCODE_ALREADY_EXISTS /
+        COPY_ALREADY_WITHDRAWN / LAST_COPY_CANNOT_BE_WITHDRAWN /
+        CONCURRENT_MODIFICATION / DATA_CONFLICT
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    LoanUpdated:
+      description: 借阅操作成功
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Loan'}
+  schemas:
+    PageMetadata:
+      type: object
+      required: [page, size, totalElements, totalPages]
+      properties:
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1}
+        totalElements: {type: integer, format: int64, minimum: 0}
+        totalPages: {type: integer, minimum: 0}
+    Book:
+      type: object
+      required: [id, title, author, category, totalCopies, availableCopies]
+      properties:
+        id: {type: string, format: uuid}
+        title: {type: string}
+        author: {type: string}
+        category: {type: string}
+        totalCopies: {type: integer, format: int64, minimum: 1}
+        availableCopies: {type: integer, format: int64, minimum: 0}
+    BookDetail:
+      allOf:
+        - {$ref: '#/components/schemas/Book'}
+        - type: object
+          required: [copies]
+          properties:
+            copies:
+              type: array
+              items: {$ref: '#/components/schemas/Copy'}
+    Copy:
+      type: object
+      required: [id, bookId, barcode, status]
+      properties:
+        id: {type: string, format: uuid}
+        bookId: {type: string, format: uuid}
+        barcode: {type: string}
+        status: {type: string, enum: [AVAILABLE, BORROWED]}
+        withdrawnAt: {type: string, format: date-time, nullable: true}
+    Reader:
+      type: object
+      required: [id, name, maxActiveLoans]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        maxActiveLoans: {type: integer, example: 5}
+    Loan:
+      type: object
+      required: [id, readerId, copyId, borrowedAt, dueDate, status, renewCount, overdue, returnedLate]
+      properties:
+        id: {type: string, format: uuid}
+        readerId: {type: string, format: uuid}
+        copyId: {type: string, format: uuid}
+        borrowedAt: {type: string, format: date-time}
+        dueDate: {type: string, format: date}
+        returnedAt: {type: string, format: date-time, nullable: true}
+        status:
+          type: string
+          enum: [ACTIVE, OVERDUE, RETURNED]
+          description: OVERDUE 仅为响应中的派生值
+        renewCount: {type: integer, minimum: 0, maximum: 1}
+        overdue: {type: boolean}
+        returnedLate: {type: boolean}
+    Error:
+      type: object
+      required: [timestamp, status, code, message, path, details]
+      properties:
+        timestamp: {type: string, format: date-time}
+        status: {type: integer}
+        code: {type: string}
+        message: {type: string}
+        path: {type: string}
+        details:
+          type: array
+          items: {type: string}

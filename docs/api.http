@@ -1,0 +1,65 @@
+@baseUrl = http://localhost:8080
+
+### 1. 登记读者（IntelliJ HTTP Client 自动保存返回的 ID）
+POST {{baseUrl}}/readers
+Content-Type: application/json
+
+{"name":"张三"}
+
+> {% client.global.set("readerId", response.body.id); %}
+
+### 2. 图书和两个副本入库；重复执行请更换条码
+POST {{baseUrl}}/books
+Content-Type: application/json
+
+{
+  "title":"领域驱动设计",
+  "author":"Eric Evans",
+  "category":"技术",
+  "barcodes":["DDD-001","DDD-002"]
+}
+
+> {%
+client.global.set("bookId", response.body.id);
+client.global.set("copyId", response.body.copies[0].id);
+%}
+
+### 3. 浏览
+GET {{baseUrl}}/books?q=领域&category=技术&page=0&size=20
+
+### 4. 详情
+GET {{baseUrl}}/books/{{bookId}}
+
+### 5. 借阅（省略 copyId 可以自动分配）
+POST {{baseUrl}}/loans
+X-Reader-Id: {{readerId}}
+Content-Type: application/json
+
+{"bookId":"{{bookId}}","copyId":"{{copyId}}"}
+
+> {% client.global.set("loanId", response.body.id); %}
+
+### 6. 续借一次
+POST {{baseUrl}}/loans/{{loanId}}/renewal
+X-Reader-Id: {{readerId}}
+
+### 7. 当前借阅（含逾期）
+GET {{baseUrl}}/readers/me/loans?status=active&page=0&size=20
+X-Reader-Id: {{readerId}}
+
+### 8. 归还
+POST {{baseUrl}}/loans/{{loanId}}/return
+X-Reader-Id: {{readerId}}
+
+### 9. 历史
+GET {{baseUrl}}/readers/me/loans?status=all
+X-Reader-Id: {{readerId}}
+
+### 10. 下架已归还的副本（仍保留另一个副本）
+DELETE {{baseUrl}}/books/{{bookId}}/copies/{{copyId}}
+
+### 11. 增加副本
+POST {{baseUrl}}/books/{{bookId}}/copies
+Content-Type: application/json
+
+{"barcode":"DDD-003"}

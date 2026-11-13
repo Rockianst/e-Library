@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: E-Library
+  datasource:
+    url: ${LIBRARY_DB_URL:jdbc:h2:file:./data/e-library;DB_CLOSE_ON_EXIT=FALSE}
+    username: ${LIBRARY_DB_USERNAME:sa}
+    password: ${LIBRARY_DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+server:
+  port: ${PORT:8080}
+library:
+  loan-days: ${LIBRARY_LOAN_DAYS:30}
+  zone-id: ${LIBRARY_ZONE_ID:Asia/Shanghai}
